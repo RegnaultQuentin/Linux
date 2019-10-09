@@ -1,25 +1,90 @@
-# -*- mode: ruby -*-
-# vi: set ft=ruby :
-
 Vagrant.configure("2") do |config|
-    config.vm.box = "debian/jessie64"
+  config.vm.box = "debian/buster64"
 
-  config.vm.network "private_network", ip: "192.168.33.10"
+  config.vm.provider "virtualbox"
+  config.vm.provision "file", source: "vagrantid_rsa.pub", destination: "/home/vagrant/.ssh/id_rsa.pub"
+  config.vm.provision "file", source: "vagrantid_rsa", destination: "/home/vagrant/.ssh/id_rsa"
 
-  config.vm.provision "shell", inline: <<-SHELL
-    pacman -S --noconfirm lighttpd php-fpm
-    cp /vagrant/provision/lighttpd.conf /etc/lighttpd/
-    sed -i 's/ = http/ = vagrant/' /etc/php/php-fpm.d/www.conf    
-   SHELL
+  config.vm.define "wiki", primary: true do |wiki|
+    wiki.vm.network :private_network, ip: "192.168.0.10"
+    wiki.vm.hostname = "wiki"
+    wiki.vm.network "forwarded_port", guest: 80, host: 8080
 
-   config.vm.provision "bootstrap", type: "shell", run: "always", inline: <<-SHELL
-    systemctl start lighttpd.service
-    systemctl enable lighttpd.service
-    systemctl start php-fpm
-    systemctl enable php-fpm
-   SHELL
-   config.vm.define "wiki-backup" do |wikib|
-    wikib.vm.network "private_network", ip: "192.168.33.15"
-    wikib.vm.hostname = "wiki-backup"
+    wiki.vm.provision "file", source: "docuwiki.conf", destination: "/tmp/docuwiki.conf"
+    
+    wiki.vm.provision "shell", inline: $script
   end
+
+  config.vm.define "backup" do |backup|
+    backup.vm.network :private_network, ip: "192.168.0.11"
+    backup.vm.hostname = "backup"
+    backup.vm.network "forwarded_port", guest: 80, host: 8081
+
+    backup.vm.provision "file", source: "docuwiki.conf", destination: "/tmp/docuwiki.conf"
+    
+    backup.vm.provision "shell", inline: $script
+  end
+
+  $script = <<-SCRIPT
+      apt install -y apt-transport-https sudo curl wget dirmngr sudo
+
+      # SSH communication
+      mkdir -p /root/.ssh
+      chmod 600 /home/vagrant/.ssh/id_rsa
+      cd /home/vagrant/.ssh
+      cat id_rsa.pub >> authorized_keys
+      echo 'Host wiki' >> /home/vagrant/.ssh/config
+      echo '    Hostname 192.168.0.10' >> /home/vagrant/.ssh/config
+      echo '    User vagrant' >> /home/vagrant/.ssh/config
+      echo '    IdentityFile /home/vagrant/.ssh/id_rsa' >> /home/vagrant/.ssh/config
+      echo ' ' >> /home/vagrant/.ssh/config
+      echo 'Host backup' >> /home/vagrant/.ssh/config
+      echo '    Hostname 192.168.0.11' >> /home/vagrant/.ssh/config
+      echo '    User vagrant' >> /home/vagrant/.ssh/config
+      echo '    IdentityFile /home/vagrant/.ssh/id_rsa' >> /home/vagrant/.ssh/config
+      mkdir -p /root/.ssh
+      cp /home/vagrant/.ssh/config /root/.ssh/config
+
+      # Create a new non-root user account with sudo access and switch to it.
+      adduser admin
+      usermod -aG sudo admin
+      su - admin
+
+      # PHP
+      sudo apt-get install -y software-properties-common
+      sudo add-apt-repository -y ppa:ondrej/php
+      sudo apt-get update
+      sudo apt install -y php7.3 php7.3-cli php7.3-fpm php7.3-gd php7.3-xml php7.3-zip
+
+      # Rsync
+      sudo apt-get install -y rsync
+
+      # Nginx
+      sudo apt install -y nginx
+      sudo cp /tmp/docuwiki.conf /etc/nginx/sites-available/dokuwiki.conf
+      sudo ln -s /etc/nginx/sites-available/dokuwiki.conf /etc/nginx/sites-enabled/
+      sudo rm -f /etc/nginx/sites-enabled/default
+      sudo systemctl reload nginx.service
+      sudo rm -f /tmp/docuwiki.conf
+
+      # Docuwiki
+      sudo mkdir -p /var/www/dokuwiki
+      sudo chown -R admin:admin /var/www/dokuwiki
+      cd /var/www/dokuwiki
+      wget https://download.dokuwiki.org/src/dokuwiki/dokuwiki-stable.tgz
+      tar xvf dokuwiki-stable.tgz
+      rm dokuwiki-stable.tgz
+      mv dokuwiki-2018-04-22b/* .
+      rm -rf dokuwiki-2018-04-22b/
+      sudo chown -R www-data:www-data /var/www/dokuwiki
+      sudo systemctl restart php7.3-fpm.service
+      sudo rm /var/www/dokuwiki/install.php
+
+      if [ "$HOSTNAME" == "backup" ]; then
+        # Crontab
+        echo '*/5 * * * * rsync -az vagrant@wiki:/var/www/dokuwiki/data/ /var/www/dokuwiki/data' > /tmp/crontabjob
+        sudo crontab /tmp/crontabjob
+        sudo rm -f /tmp/crontabjob
+      fi
+  SCRIPT
 end
