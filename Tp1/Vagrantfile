@@ -6,16 +6,41 @@
 # backwards compatibility). Please don't change it unless you know what
 # you're doing.
 Vagrant.configure("2") do |config|
-  config.vm.box = "debian"
-  config.vm.define "master" do |master|
-    master.vm.network "private_network", ip: "192.168.56.10"
-    master.vm.hostname = "master"
-  end
-  config.vm.box = "debian"
-  config.vm.define "master" do |master|
-    master.vm.network "private_network", ip: "192.168.56.11"
-    master.vm.hostname = "master"
-  end
+    config.vm.box = "debian/jessie64"
+
+  config.vm.network "private_network", ip: "192.168.33.10"
+
+  config.vm.provision "shell", inline: <<-SHELL
+    pacman -S --noconfirm lighttpd php-fpm
+    cp /vagrant/provision/lighttpd.conf /etc/lighttpd/
+    sed -i 's/ = http/ = vagrant/' /etc/php/php-fpm.d/www.conf    
+   SHELL
+
+   config.vm.provision "bootstrap", type: "shell", run: "always", inline: <<-SHELL
+    systemctl start lighttpd.service
+    systemctl enable lighttpd.service
+    systemctl start php-fpm
+    systemctl enable php-fpm
+   SHELL
+   end
+
+  
+  config.vm.box = "debian/jessie64"
+
+  config.vm.network "private_network", ip: "192.168.33.15"
+
+  config.vm.provision "shell", inline: <<-SHELL
+    pacman -S --noconfirm lighttpd php-fpm
+    cp /vagrant/provision/lighttpd.conf /etc/lighttpd/
+    sed -i 's/ = http/ = vagrant/' /etc/php/php-fpm.d/www.conf    
+   SHELL
+
+   config.vm.provision "bootstrap", type: "shell", run: "always", inline: <<-SHELL
+    systemctl start lighttpd.service
+    systemctl enable lighttpd.service
+    systemctl start php-fpm
+    systemctl enable php-fpm
+   SHELL
 
 
 
